@@ -1,0 +1,677 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Deran Editor PRO</title>
+
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+
+<style>
+:root{
+ --bg:#1e1e1e;
+ --panel:#252526;
+ --panel2:#2d2d2d;
+ --border:#333;
+ --accent:#0e639c;
+ --text:#eaeaea;
+}
+
+body{
+ margin:0;
+ background:var(--bg);
+ font-family:'Inter', monospace;
+ color:var(--text);
+ overflow:hidden;
+}
+
+.topbar{
+ height:48px;
+ background:var(--panel2);
+ display:flex;
+ align-items:center;
+ justify-content:space-between;
+ padding:0 10px;
+ border-bottom:1px solid var(--border);
+}
+
+.menu-btn{
+ cursor:pointer;
+ margin-left:12px;
+ font-size:18px;
+}
+
+.layout{
+ display:flex;
+ height:calc(100vh - 48px);
+}
+
+.sidebar{
+ width:260px;
+ background:var(--panel);
+ border-right:1px solid var(--border);
+ overflow:auto;
+ transition:.25s;
+}
+
+.file{
+ padding:10px 14px;
+ cursor:pointer;
+ border-bottom:1px solid #2a2a2a;
+}
+.file:hover{background:#373737}
+
+.editor-area{
+ flex:1;
+ display:flex;
+ flex-direction:column;
+}
+
+.tabs{
+ height:34px;
+ background:var(--panel2);
+ display:flex;
+ overflow:auto;
+}
+
+.tab{
+ padding:8px 14px;
+ cursor:pointer;
+ font-size:12px;
+ border-right:1px solid var(--border);
+}
+.tab.active{background:var(--bg)}
+
+#editor{flex:1}
+
+/* dropdown menu */
+.dropdown{
+ position:absolute;
+ top:48px;
+ right:10px;
+ background:var(--panel2);
+ border-radius:8px;
+ display:none;
+ box-shadow:0 0 20px rgba(0,0,0,.6);
+ overflow:hidden;
+ z-index:999;
+}
+
+.dropdown div{
+ padding:10px 14px;
+ cursor:pointer;
+ border-bottom:1px solid var(--border);
+}
+.dropdown div:hover{background:#3a3a3a}
+
+/* mobile */
+@media(max-width:800px){
+ .sidebar{
+  position:absolute;
+  left:-260px;
+  height:100%;
+  z-index:10;
+ }
+ .sidebar.show{ left:0; }
+}
+
+.pc-mode .topbar,
+.pc-mode .sidebar,
+.pc-mode .tabs{
+ display:none !important;
+}
+
+.pc-mode .layout{
+ height:100vh;
+ width:100vw;
+}
+
+.pc-mode #editor{
+ width:100vw !important;
+ height:100vh !important;
+}
+
+.pc-exit-btn{
+ position:fixed;
+ left:12px;
+ bottom:12px;
+ background:rgba(0,0,0,0.35);
+ backdrop-filter: blur(6px);
+ border-radius:10px;
+ padding:8px 10px;
+ font-size:12px;
+ color:#fff;
+ cursor:pointer;
+ z-index:9999;
+ display:none;
+}
+
+.pc-mode .pc-exit-btn{
+ display:block;
+}
+
+</style>
+</head>
+<body>
+
+<div class="pc-exit-btn" onclick="togglePCMode()">EXIT PC</div>
+<div class="topbar">
+	
+ <b>Deran Editor</b>
+ <div>
+   <input type="file" id="fileInput" hidden>
+   <span class="menu-btn" onclick="toggleSidebar()">☰</span>
+   <span class="menu-btn" onclick="newFile()">📄+</span>
+   <span class="menu-btn" onclick="openFiles()">📂</span>
+   <span class="menu-btn" onclick="saveFile()">💾</span>
+   <span class="menu-btn" onclick="toggleMenu()">⋮</span>
+ </div>
+</div>
+
+<div class="dropdown" id="menu">
+ <div onclick="editor.getAction('actions.find').run()">🔍 Search</div>
+ <div onclick="editor.getAction('editor.action.startFindReplaceAction').run()">Replace</div>
+ <div onclick="gotoLine()">Goto Line</div>
+ <div onclick="toggleWrap()">Word Wrap</div>
+ <div onclick="toggleMinimap()">Toggle Minimap</div>
+ <div onclick="changeTheme()">Visual Style</div>
+ <div onclick="changeFont()">Font Size</div>
+ <div onclick="changeSyntax()">Syntax</div>
+ <div onclick="livePreview()">Live Preview</div>
+ <div onclick="togglePCMode()">Mode Laks PC</div>
+</div>
+
+<div class="layout">
+ <div class="sidebar" id="sidebar"></div>
+
+ <div class="editor-area">
+   <div class="tabs" id="tabs"></div>
+   <div id="editor"></div>
+ </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.min.js"></script>
+
+<script>
+let editor;
+let openTabs={};
+let currentFile=null;
+let fileHandle=null;
+let wordWrap=false;
+let fileHandles = {};
+let projectFiles = {};
+// Flag supaya editor tidak auto fokus saat scroll
+let preventAutoFocus = false;
+
+let settings = {
+  fontSize: 14,
+  theme: "vs-dark",
+  wordWrap: false,
+  minimap: true,
+  pcMode: false,
+  language: "plaintext"
+};
+
+let defaultFontSize = settings.fontSize; // simpan ukuran font normal
+
+require.config({ paths:{ vs:'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs'} });
+require(["vs/editor/editor.main"], function(){
+
+    loadSettings();
+
+    editor = monaco.editor.create(document.getElementById('editor'),{
+        value:"// DERAN EDITOR PRO\n",
+        language: settings.language,
+        theme: settings.theme,
+        automaticLayout:true,
+        fontSize: settings.fontSize,
+        wordWrap: settings.wordWrap ? "on" : "off",
+        minimap:{ enabled: settings.minimap }
+    });
+
+    const editorDiv = document.getElementById('editor');
+
+    // ===== MOBILE TAP + CURSOR EFFECT =====
+    let touchStartX = 0;
+    let touchStartY = 0;
+    let touchStartTime = 0;
+    const TAP_MAX_DISTANCE = 10; // px
+    const TAP_MAX_DURATION = 400; // ms
+    let isScrolling = false;
+    let scrollTimer = null;
+    let allowFocus = false; // ✅ hanya true kalau user tap valid
+
+    editorDiv.addEventListener('touchstart', e=>{
+        if(e.touches.length === 1){
+            const t = e.touches[0];
+            touchStartX = t.clientX;
+            touchStartY = t.clientY;
+            touchStartTime = Date.now();
+            isScrolling = false;
+            allowFocus = false;
+            // sementara hilangkan cursor blink sampai user tap valid
+            editor.updateOptions({ cursorBlinking: 'hidden' });
+        }
+    }, {passive:true});
+
+    editorDiv.addEventListener('touchmove', e=>{
+        if(!isScrolling){
+            isScrolling = true;
+            editor.updateOptions({ readOnly: true });
+        }
+        clearTimeout(scrollTimer);
+        scrollTimer = setTimeout(()=>{
+            isScrolling = false;
+            editor.updateOptions({ readOnly: false });
+            // scroll selesai → hilangkan efek cursor tekan
+            editor.updateOptions({ cursorBlinking: 'hidden' });
+        }, 150);
+    }, {passive:true});
+
+    editorDiv.addEventListener('touchend', e=>{
+        if(e.changedTouches.length === 1){
+            const t = e.changedTouches[0];
+            const dx = t.clientX - touchStartX;
+            const dy = t.clientY - touchStartY;
+            const dt = Date.now() - touchStartTime;
+            const dist = Math.sqrt(dx*dx + dy*dy);
+
+            if(dist <= TAP_MAX_DISTANCE && dt <= TAP_MAX_DURATION && !isScrolling){
+                allowFocus = true;
+                setTimeout(()=>{
+                    if(allowFocus){
+                        editor.focus();
+                        // ✅ aktifkan cursor blink hanya saat tap valid
+                        editor.updateOptions({ cursorBlinking: 'blink', cursorStyle: 'line' });
+                    }
+                }, 50);
+            }
+        }
+    }, {passive:true});
+
+    // blur → reset allowFocus dan hilangkan efek cursor
+    editor.onDidBlurEditorWidget(()=>{
+        allowFocus = false;
+        editor.updateOptions({ cursorBlinking: 'hidden' });
+    });
+
+    // override internal focus → keyboard hanya muncul saat tap valid
+    editor.onDidFocusEditorWidget(()=>{
+        if(!allowFocus){
+            editor.blur();
+            editor.updateOptions({ cursorBlinking: 'hidden' });
+        }
+    });
+
+    // desktop fallback → tetap normal
+    editor.onMouseDown(()=> editor.focus());
+
+    // ===== Session / content handling =====
+    loadSession();
+
+    editor.onDidChangeModelContent(()=>{
+        if(currentFile){
+            projectFiles[currentFile] = editor.getValue();
+            saveSession();
+        }
+    });
+
+});
+
+function toggleSidebar(){
+ document.getElementById("sidebar").classList.toggle("show");
+}
+
+function toggleMenu(){
+ const m=document.getElementById("menu");
+ if(document.body.classList.contains("pc-mode")){
+   m.style.display = "none"; // jangan tampilkan menu di PC Mode
+ } else {
+   m.style.display=m.style.display==="block"?"none":"block";
+ }
+}
+
+function renderTabs(){
+ const tabs=document.getElementById('tabs');
+ tabs.innerHTML="";
+ for(let name in openTabs){
+   const t=document.createElement('div');
+   t.className="tab"+(name===currentFile?" active":"");
+   t.innerText=name;
+   t.onclick=()=>switchTab(name);
+   tabs.appendChild(t);
+ }
+}
+
+function switchTab(name){
+ if(currentFile){
+   projectFiles[currentFile] = editor.getValue();
+ }
+
+ currentFile = name;
+ editor.setValue(projectFiles[name]);
+ detectSyntax(name);
+ renderTabs();
+}
+
+function openFile(name, content){
+ openTabs[name] = content;
+ projectFiles[name] = content;
+ currentFile = name;
+
+ editor.setValue(content || "");  // pastikan string, jangan null
+ editor.focus();                  // Fokus biar bisa diketik
+ detectSyntax(name);
+ renderTabs();
+ addSidebarFile(name);
+ saveSession();
+}
+
+function detectSyntax(name){
+ const ext=name.split('.').pop().toLowerCase();
+ const map={
+   html:"html",
+   css:"css",
+   js:"javascript",
+   lua:"lua",
+   c:"c",
+   cpp:"cpp",
+   pwn:"c",
+   json:"json",
+   txt:"plaintext"
+ };
+ if(map[ext]){
+   monaco.editor.setModelLanguage(editor.getModel(),map[ext]);
+ }else{
+   monaco.editor.setModelLanguage(editor.getModel(),"plaintext");
+ }
+}
+
+function addSidebarFile(path){
+ const sb=document.getElementById('sidebar');
+
+ const div=document.createElement('div');
+ div.className="file";
+ div.innerText="📄 " + path;
+ div.onclick=()=>switchTab(path);
+
+ sb.appendChild(div);
+}
+
+/* OPEN FILE */
+fileInput.onchange=e=>{
+ const file=e.target.files[0];
+ const reader=new FileReader();
+ reader.onload=()=>openFile(file.name,reader.result);
+ reader.readAsText(file);
+};
+
+function openFiles(){ fileInput.click(); }
+
+/* NEW FILE */
+function newFile(){
+ const name = prompt("Nama file:");
+ if(!name) return;
+
+ openTabs[name] = "";
+ projectFiles[name] = "";
+ currentFile = name;
+
+ editor.setValue(""); 
+ editor.focus(); // wajib fokus supaya bisa mulai ketik
+ addSidebarFile(name);
+ renderTabs();
+ saveSession();
+}
+
+/* SAVE SMART SYSTEM */
+async function saveFile(){
+ if(!currentFile) return;
+
+ projectFiles[currentFile] = editor.getValue();
+ saveSession();
+
+ try{
+   if(!fileHandles[currentFile] && 'showSaveFilePicker' in window){
+     fileHandles[currentFile] = await window.showSaveFilePicker({
+       suggestedName: currentFile
+     });
+   }
+
+   if(fileHandles[currentFile]){
+     const writable = await fileHandles[currentFile].createWritable();
+     await writable.write(editor.getValue());
+     await writable.close();
+     alert("✅ File berhasil disimpan");
+   }else{
+     const blob=new Blob([editor.getValue()]);
+     const a=document.createElement("a");
+     a.href=URL.createObjectURL(blob);
+     a.download=currentFile;
+     a.click();
+   }
+
+ }catch(e){
+   console.log(e);
+ }
+}
+
+/* TOOLS */
+function gotoLine(){
+ let l=prompt("Goto line:");
+ if(l){
+   editor.revealLineInCenter(parseInt(l));
+   editor.setPosition({lineNumber:parseInt(l),column:1});
+ }
+}
+
+function toggleWrap(){
+ settings.wordWrap = !settings.wordWrap;
+ editor.updateOptions({wordWrap: settings.wordWrap?"on":"off"});
+ saveSettings();
+}
+
+function toggleMinimap(){
+ settings.minimap = !settings.minimap;
+ editor.updateOptions({minimap:{enabled:settings.minimap}});
+ saveSettings();
+}
+
+function changeFont(){
+ let size=prompt("Font size (10-30)");
+ if(size){
+   settings.fontSize = parseInt(size);
+   defaultFontSize = settings.fontSize; // update default font
+   editor.updateOptions({fontSize: settings.fontSize});
+   saveSettings();
+ }
+}
+
+
+function changeTheme(){
+ let t=prompt("dark, light, hc");
+
+ if(t==="light"){
+   settings.theme="vs";
+ }
+ else if(t==="hc"){
+   settings.theme="hc-black";
+ }
+ else{
+   settings.theme="vs-dark";
+ }
+
+ monaco.editor.setTheme(settings.theme);
+ saveSettings();
+}
+
+/* SYNTAX MENU */
+function changeSyntax(){
+ const choice = prompt(
+`Pilih Syntax:
+
+1 = C
+2 = C++
+3 = CSS
+4 = HTML
+5 = LUA
+6 = BASIC
+7 = DEFAULT`
+ );
+
+ const map={
+   1:"c",
+   2:"cpp",
+   3:"css",
+   4:"html",
+   5:"lua",
+   6:"vb",
+   7:"plaintext"
+ };
+
+ if(map[choice]){
+   monaco.editor.setModelLanguage(editor.getModel(), map[choice]);
+	settings.language = map[choice];
+	saveSettings(); 
+ }
+}
+
+function saveSession(){
+ localStorage.setItem("deranProject", JSON.stringify(projectFiles));
+}
+
+function loadSession(){
+ const data = localStorage.getItem("deranProject");
+ if(!data) return;
+
+ projectFiles = JSON.parse(data);
+ document.getElementById("sidebar").innerHTML = "";
+
+ for(const name in projectFiles){
+   openTabs[name] = projectFiles[name];
+   addSidebarFile(name);
+ }
+
+ const first = Object.keys(projectFiles)[0];
+ if(first) switchTab(first);
+}
+
+function livePreview(){
+ if(!currentFile || !currentFile.endsWith(".html")){
+   alert("Hanya untuk file HTML");
+   return;
+ }
+
+ const win = window.open();
+ win.document.open();
+ win.document.write(editor.getValue());
+ win.document.close();
+}
+
+function saveSettings(){
+ localStorage.setItem("deranSettings", JSON.stringify(settings));
+}
+
+function loadSettings(){
+ const s = localStorage.getItem("deranSettings");
+ if(s){
+   settings = JSON.parse(s);
+ }
+ 
+ // Jangan aktifkan PC Mode otomatis
+ settings.pcMode = false;
+}
+
+function togglePCMode(){
+
+ settings.pcMode = !settings.pcMode;
+
+ if(settings.pcMode){
+   activatePCMode();
+ }else{
+   deactivatePCMode();
+ }
+
+ saveSettings();
+}
+
+function activatePCMode(){
+    settings.pcMode = true;
+    document.body.classList.add("pc-mode");
+
+    // simpan state awal editor style
+    const editorDiv = document.getElementById('editor');
+    editorDiv.dataset.oldPosition = editorDiv.style.position || "";
+    editorDiv.dataset.oldTop = editorDiv.style.top || "";
+    editorDiv.dataset.oldLeft = editorDiv.style.left || "";
+    editorDiv.dataset.oldWidth = editorDiv.style.width || "";
+    editorDiv.dataset.oldHeight = editorDiv.style.height || "";
+    editorDiv.dataset.oldZ = editorDiv.style.zIndex || "";
+
+    // fullscreen editor
+    editorDiv.style.position = "fixed";
+    editorDiv.style.top = "0";
+    editorDiv.style.left = "0";
+    editorDiv.style.width = "100vw";
+    editorDiv.style.height = "100vh";
+    editorDiv.style.zIndex = "999";
+
+    // sembunyikan UI lain
+    document.getElementById("sidebar").style.display = "none";
+    document.getElementById("tabs").style.display = "none";
+    document.querySelector(".topbar").style.display = "none";
+    document.getElementById("menu").style.display = "none";
+
+    // update editor options
+    editor.updateOptions({
+        fontSize: 1,
+        minimap: { enabled:true },
+        wordWrap: "off",
+        scrollBeyondLastLine: false
+    });
+
+    editor.focus();
+    editor.layout();
+}
+
+function deactivatePCMode(){
+    settings.pcMode = false;
+
+    if(document.fullscreenElement){
+        document.exitFullscreen().catch(()=>{});
+    }
+    if(screen.orientation && screen.orientation.unlock){
+        screen.orientation.unlock();
+    }
+
+    document.body.classList.remove("pc-mode");
+
+    // restore editor style
+    const editorDiv = document.getElementById('editor');
+    editorDiv.style.position = editorDiv.dataset.oldPosition || "";
+    editorDiv.style.top = editorDiv.dataset.oldTop || "";
+    editorDiv.style.left = editorDiv.dataset.oldLeft || "";
+    editorDiv.style.width = editorDiv.dataset.oldWidth || "";
+    editorDiv.style.height = editorDiv.dataset.oldHeight || "";
+    editorDiv.style.zIndex = editorDiv.dataset.oldZ || "";
+
+    // restore UI
+    document.getElementById("sidebar").style.display = "";
+    document.getElementById("tabs").style.display = "";
+    document.querySelector(".topbar").style.display = "";
+    document.getElementById("menu").style.display = "none";
+
+    // restore editor options
+    editor.updateOptions({
+        fontSize: defaultFontSize,
+        minimap: { enabled: settings.minimap },
+        wordWrap: settings.wordWrap ? "on" : "off"
+    });
+
+    editor.focus();
+    setTimeout(()=> editor.layout(), 200);
+}
+
+</script>
+</body>
+</html>
